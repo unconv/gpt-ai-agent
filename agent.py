@@ -1,11 +1,11 @@
+#!/usr/bin/env python3
+
 import openai
 import json
 import sys
 import os
 
 import gpt_functions
-
-openai.api_key = os.getenv("OPENAI_API_KEY")
 
 def parse_function_response(message):
     function_call = message["function_call"]
@@ -26,21 +26,46 @@ def parse_function_response(message):
     return (function_name, function_response)
 
 
-def run_conversation(message, messages = []):
-    messages.append(message)
+def flip_roles(messages):
+    for message in messages:
+        if message["role"] == "user":
+            message["role"] = "assistant"
+        elif message["role"] == "assistant":
+            message["role"] = "user"
+    return messages
+
+
+def run_conversation(message, system_messages, messages = [{}], system_number = 0):
+    system_data = system_messages[system_number]
+
+    system_message = {
+        "role": "system",
+        "content": f"{system_data['description']}. Always start your message with your name: '{system_data['name']}' and a colon."
+    }
+
+    messages[0] = system_message
+    if len(messages) % 5 == 0:
+        messages.append(system_message)
+
+    system_number += 1
+    if system_number > len(system_messages)-1:
+        system_number = 0
+
+    if message:
+        messages.append(message)
+        print("\n" + message["content"])
 
     with open("messages.json", "w") as f:
         f.write(json.dumps(messages, indent=4))
 
     response = openai.ChatCompletion.create(
         messages=messages,
-        model="gpt-3.5-turbo-0613",
+        model="gpt-4-0613",
         functions=gpt_functions.definitions,
         function_call="auto",
     )
 
     message = response["choices"][0]["message"]
-    messages.append(message)
 
     if "function_call" in message:
         function_name, function_response = parse_function_response(message)
@@ -51,25 +76,23 @@ def run_conversation(message, messages = []):
             "content": function_response
         }
     else:
-        user_message = input("GPT: " + message["content"] + "\nYou: ")
-        message = {
-            "role": "user",
-            "content": user_message
-        }
+        messages = flip_roles(messages)
 
-    run_conversation(message, messages)
+    run_conversation(message, system_messages, messages, system_number)
 
-messages = [
-    {
-        "role": "system",
-        "content": "You are an AI bot that can do everything using function calls. When you are asked to do something, use the function call you have available and then respond with a message confirming what you have done."
-    }
-]
+openai.api_key = os.getenv("OPENAI_API_KEY")
 
-user_message = input("GPT: What do you want to do?\nYou: ")
-message = {
-    "role": "user",
-    "content": user_message
-}
+if not openai.api_key:
+    openai.api_key = input("Please enter your OpenAI API-key: ")
 
-run_conversation(message, messages)
+system_file = input("Please enter system message file from 'system' folder: ")
+
+if not system_file:
+    system_file = "php-python-rust.json"
+
+system_file = system_file.removesuffix(".json").removeprefix("system/").removeprefix("system\\")+".json"
+
+with open(os.path.join(os.path.dirname(__file__), "system", system_file), "r") as f:
+    system_messages = json.load(f)
+
+run_conversation(None, system_messages)
